@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="en">
-<head>
+<!-- https://github.com/joshbrew/Torus_Flat_Mapping_Concepts/blob/main/README.md -->
+  <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Torus ↔ Flat map — mapped rect / spiral / cross square (class-driven, documented)</title>
@@ -19,6 +20,7 @@
   hr{border-color:rgba(255,255,255,0.06);margin:8px 0}
   button{padding:5px 9px;border-radius:6px;border:1px solid rgba(255,255,255,0.18);background:#1a2330;color:#e6e6e6;cursor:pointer}
   button:active{transform:translateY(1px)}
+  .small{font-size:12px;opacity:0.85}
 </style>
 </head>
 <body>
@@ -36,6 +38,9 @@
 
   <div class="row"><span class="lbl">U segs (base)</span><input id="su" type="range" min="8" max="256" step="1" value="96"><span id="suval" style="margin-left:8px">96</span></div>
   <div class="row"><span class="lbl">V segs</span><input id="sv" type="range" min="8" max="256" step="1" value="96"><span id="svval" style="margin-left:8px">96</span></div>
+
+  <div class="row"><span class="lbl">Adaptive U per-row (mapper)</span><input id="adaptiveNu" type="checkbox"></div>
+  <div class="row small"><span class="lbl">Adaptive Nu range</span><span id="nuRange" style="margin-left:8px">—</span></div>
 
   <hr>
 
@@ -137,6 +142,9 @@ const suslider= document.getElementById('su');
 const svslider= document.getElementById('sv');
 const Rval = document.getElementById('Rval'), rval = document.getElementById('rval');
 const suval = document.getElementById('suval'), svval = document.getElementById('svval');
+
+const adaptiveNu = document.getElementById('adaptiveNu');
+const nuRangeEl = document.getElementById('nuRange');
 
 const showOverlay = document.getElementById('showOverlay');
 const showPlaneOverlay = document.getElementById('showPlaneOverlay');
@@ -329,6 +337,39 @@ class TorusMapper {
     const tv = Pv.clone().sub(P).normalize();
     const n = tu.clone().cross(tv).normalize();
     return { p:P, tu, tv, n };
+  }
+
+  /**
+   * Compute per-row U counts (Nu) given a base segU and segV.
+   * - This uses the standard-torus circumference at each V to scale segU.
+   * - options:
+   *    equalQuads: boolean -> scale using radial circumference (approx equal arc length around hole)
+   *    clampMin: min count per row (default 8)
+   *    clampMax: max count per row (default segU*3)
+   *    sampleV: number of v samples used when measuring circumference (defaults to segV)
+   * - returns Uint16Array length segV with counts per row
+   */
+  rowCounts(segUBase, segV, opts = {}){
+    const opt = Object.assign({ equalQuads: false, clampMin:8, clampMax: segUBase*3, sampleV: segV }, opts);
+    const Nu = new Uint16Array(segV);
+    // For the standard torus the circumference at tube-angle v is: 2π * (R + r*cos(v))
+    // coefficient relative to base 2π*R is (R + r*cos(v)) / R
+    // Use that to scale segUBase. If equalQuads requested, we can use the same coefficient logic.
+    for(let j=0;j<segV;j++){
+      const v = (j / segV) * this.TWO_PI;
+      let coef = 1.0;
+      if(this.params.mode === 'std'){
+        const R = this.params.R, r = this.params.r;
+        coef = (R + r * Math.cos(v)) / Math.max(1e-9, R);
+      } else {
+        // fallback: for non-std modes use uniform
+        coef = 1.0;
+      }
+      let n = Math.round(segUBase * coef);
+      n = Math.max(opt.clampMin, Math.min(opt.clampMax, n));
+      Nu[j] = n;
+    }
+    return Nu;
   }
 
   /**
@@ -582,19 +623,39 @@ class TorusMapper {
    - buildPlane draws the flat uv plane
    ========================================================================= */
 
+/**
+ * buildVariableRingMesh
+ * - getPos(uRadians, vRadians) -> THREE.Vector3
+ * - segU (base), segV counts
+ * - options:
+ *    equalArc: boolean (use radial scaling per-row)
+ *    shear: number
+ *    forceUniformU: boolean
+ *    Nu: optional Uint16Array or Array of per-row counts (length segV) - if provided, use directly
+ *    R, r: numbers (for equalArc calculation)
+ *
+ * Returns { mesh, Nu } where Nu is the actual per-row counts used.
+ */
 function buildVariableRingMesh(getPos, segU, segV, options){
   options ||= {};
   const useEq=!!options.equalArc, shear=Number(options.shear)||0.0, forceUniformU=!!options.forceUniformU;
-  const Nu=new Array(segV);
-  for(let j=0;j<segV;++j){
-    if(forceUniformU){ Nu[j]=segU; continue; }
-    const v=j/segV*TWO_PI;
-    if(useEq && typeof options.R==='number'){
-      const coef=(options.R + options.r*Math.cos(v));
-      let n=Math.round(segU * (coef/Math.max(1e-6, options.R)));
-      Nu[j]=Math.max(8, Math.min(n, segU*3));
-    } else Nu[j]=segU;
+  const providedNu = options.Nu && options.Nu.length===segV ? Array.from(options.Nu) : null;
+
+  const Nu = new Array(segV);
+  if(providedNu){
+    for(let j=0;j<segV;++j) Nu[j]=Math.max(3, Math.floor(providedNu[j]));
+  } else {
+    for(let j=0;j<segV;++j){
+      if(forceUniformU){ Nu[j]=segU; continue; }
+      const v=j/segV*TWO_PI;
+      if(useEq && typeof options.R==='number'){
+        const coef=(options.R + options.r*Math.cos(v));
+        let n=Math.round(segU * (coef/Math.max(1e-6, options.R)));
+        Nu[j]=Math.max(8, Math.min(n, segU*3));
+      } else Nu[j]=segU;
+    }
   }
+
   const ringStart=new Array(segV); let total=0; for(let j=0;j<segV;++j){ ringStart[j]=total; total+=Nu[j]; }
   const pos=new Float32Array(total*3), uv=new Float32Array(total*2); let vi=0;
   for(let j=0;j<segV;++j){
@@ -731,9 +792,22 @@ function rebuild(){
   // getPos function used to build meshes and wireframes - expects radians
   const getPos = modeStd ? ((u,v)=>stdPos(u,v,+Rslider.value,+rslider.value)) : ((u,v)=>cliffordPos(u,v,1.8));
 
+  // If adaptiveNu is enabled, compute per-row Nu using the mapper
+  let optionsForBuild = { equalArc:modeStd&&eqArc.checked, shear, forceUniformU:!!spiral, R:+Rslider.value, r:+rslider.value };
+  if(adaptiveNu.checked){
+    const segUbase = +suslider.value, segV = +svslider.value;
+    const Nu = tmapper.rowCounts(segUbase, segV, { equalQuads: !!eqArc.checked, clampMin: 8, clampMax: segUbase*3 });
+    optionsForBuild.Nu = Nu;
+    // Update diagnostic UI
+    let minN=Infinity, maxN=-Infinity, sum=0;
+    for(let i=0;i<Nu.length;i++){ minN=Math.min(minN, Nu[i]); maxN=Math.max(maxN, Nu[i]); sum+=Nu[i]; }
+    nuRangeEl.textContent = `${minN} → ${maxN} (avg ${Math.round(sum/Nu.length)})`;
+  } else {
+    nuRangeEl.textContent = '—';
+  }
+
   // build pickable mesh (invisible material) that matches displayed geometry
-  const built = buildVariableRingMesh(getPos, +suslider.value, +svslider.value,
-    { equalArc:modeStd&&eqArc.checked, shear, forceUniformU:!!spiral, R:+Rslider.value, r:+rslider.value });
+  const built = buildVariableRingMesh(getPos, +suslider.value, +svslider.value, optionsForBuild);
   currentPick=built.mesh; torusGroup.add(currentPick);
 
   // iso-lines for u and v directions
@@ -928,6 +1002,7 @@ function linkArcSquareToSpiral(){
   [modeSel,'change'],[eqArc,'change'],[spiral,'change'],
   [twistEl,'input'],[twistEl,'change'],
   [Rslider,'input'],[rslider,'input'],[suslider,'input'],[svslider,'input'],
+  [adaptiveNu,'change'],
   [showOverlay,'change'],[showPlaneOverlay,'change'],
   [symAxis,'change'],[symCount,'input'],[symCount,'change'],
   [symStrength,'input'],[symStrength,'change'],
