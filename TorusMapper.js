@@ -1,6 +1,5 @@
 
 /* =========================================================================
-   See toroid.html for usage (or just feed it to your LLM)
    Constants and parametric surface functions
    - stdPos: standard torus parameterization (u,v angles in radians)
    - cliffordPos: Clifford torus stereographic mapping for alternate appearance
@@ -170,6 +169,39 @@ class TorusMapper {
     const tv = Pv.clone().sub(P).normalize();
     const n = tu.clone().cross(tv).normalize();
     return { p:P, tu, tv, n };
+  }
+
+  /**
+   * Compute per-row U counts (Nu) given a base segU and segV.
+   * - This uses the standard-torus circumference at each V to scale segU.
+   * - options:
+   *    equalQuads: boolean -> scale using radial circumference (approx equal arc length around hole)
+   *    clampMin: min count per row (default 8)
+   *    clampMax: max count per row (default segU*3)
+   *    sampleV: number of v samples used when measuring circumference (defaults to segV)
+   * - returns Uint16Array length segV with counts per row
+   */
+  rowCounts(segUBase, segV, opts = {}){
+    const opt = Object.assign({ equalQuads: false, clampMin:8, clampMax: segUBase*3, sampleV: segV }, opts);
+    const Nu = new Uint16Array(segV);
+    // For the standard torus the circumference at tube-angle v is: 2π * (R + r*cos(v))
+    // coefficient relative to base 2π*R is (R + r*cos(v)) / R
+    // Use that to scale segUBase. If equalQuads requested, we can use the same coefficient logic.
+    for(let j=0;j<segV;j++){
+      const v = (j / segV) * this.TWO_PI;
+      let coef = 1.0;
+      if(this.params.mode === 'std'){
+        const R = this.params.R, r = this.params.r;
+        coef = (R + r * Math.cos(v)) / Math.max(1e-9, R);
+      } else {
+        // fallback: for non-std modes use uniform
+        coef = 1.0;
+      }
+      let n = Math.round(segUBase * coef);
+      n = Math.max(opt.clampMin, Math.min(opt.clampMax, n));
+      Nu[j] = n;
+    }
+    return Nu;
   }
 
   /**
