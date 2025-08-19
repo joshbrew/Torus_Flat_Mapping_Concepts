@@ -13,5 +13,7 @@ This is just a helpful math debugger for translating in other use cases as it's 
 <img width="2150" height="1202" alt="image" src="https://github.com/user-attachments/assets/9d5f9575-4173-45a6-80a9-f48dffb646f3" />
 <img width="2910" height="1262" alt="image" src="https://github.com/user-attachments/assets/13d14cbd-6cbe-4417-a69f-117a3c8641a4" />
 <img width="2172" height="1177" alt="image" src="https://github.com/user-attachments/assets/775faaad-8fb0-48b1-8f0f-f4a85113249a" />
+<img width="3839" height="1249" alt="image" src="https://github.com/user-attachments/assets/36fab2c2-7151-4622-a854-ddfabfc6d511" />
+
 
 
